@@ -26,6 +26,17 @@ schema = Schema(f)
 event_json = s.event_to_json("test", [1,2,2])
 ```
 
+Alternatively to construct the schema from a Wasm module and explicit version,
+e.g., such as the data received from `GetModuleSource` grpc call
+
+```python
+resp = stub.GetModuleSource(r)
+schema = None
+if resp.WhichOneof('module') == 'v0':
+    schema = Schema(resp.v0.value, 0)
+elif resp.WhichOneof('module') == 'v1'::
+    schema = Schema(resp.v1.value, 1)
+```
 
 ## Building
 
