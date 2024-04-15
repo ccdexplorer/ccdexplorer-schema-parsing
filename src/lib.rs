@@ -9,6 +9,7 @@ use pyo3::{exceptions::*, prelude::*};
 #[pymodule]
 fn schema_parsing(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_schema_ffi, m)?)?;
+    m.add_function(wrap_pyfunction!(extract_schema_pair_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(parse_event_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(parse_return_value_ffi, m)?)?;
     Ok(())
@@ -28,6 +29,28 @@ fn extract_schema_ffi(versioned_module_source: Vec<u8>) -> PyResult<Vec<u8>> {
     let schema = match module.version {
         WasmVersion::V0 => utils::get_embedded_schema_v0(module.source.as_ref()),
         WasmVersion::V1 => utils::get_embedded_schema_v1(module.source.as_ref()),
+    };
+    let schema = match schema {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(PyValueError::new_err(format!(
+                "Unable to get schema from the module: {e}"
+            )))
+        }
+    };
+    Ok(to_bytes(&schema))
+}
+
+#[pyfunction]
+fn extract_schema_pair_ffi(module_version: u8, module_source: Vec<u8>) -> PyResult<Vec<u8>> {
+    let schema = match module_version {
+        0 => utils::get_embedded_schema_v0(module_source.as_ref()),
+        1 => utils::get_embedded_schema_v1(module_source.as_ref()),
+        v => {
+            return Err(PyValueError::new_err(format!(
+                "Unrecognized module version: {v}"
+            )))
+        }
     };
     let schema = match schema {
         Ok(s) => s,
