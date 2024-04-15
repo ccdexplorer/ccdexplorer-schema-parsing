@@ -1,6 +1,7 @@
-from .schema_parsing import extract_schema_ffi, parse_event_ffi
+from .schema_parsing import extract_schema_ffi, parse_event_ffi, parse_return_value_ffi
 
 import json
+
 
 class Schema:
     def __init__(self, source):
@@ -11,5 +12,7 @@ class Schema:
         return json.loads(response)
 
     def return_value_to_json(self, contractName, functionName, returnValueData):
-        response = parse_return_value_ffi(self.schema, contractName, functionName, returnValueData)
+        response = parse_return_value_ffi(
+            self.schema, contractName, functionName, returnValueData
+        )
         return json.loads(response)

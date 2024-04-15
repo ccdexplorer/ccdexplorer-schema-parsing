@@ -1,2 +1,7 @@
 maturin
 uv
+ccdexplorer-fundamentals
+grpcio
+grpcio-tools
+grpclib
+python-dotenv
