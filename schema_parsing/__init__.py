@@ -2,6 +2,7 @@ from .schema_parsing import (
     extract_schema_ffi,
     extract_schema_pair_ffi,
     parse_event_ffi,
+    parse_parameter_ffi,
     parse_return_value_ffi,
 )
 
@@ -24,6 +25,10 @@ class Schema:
 
     def event_to_json(self, contractName, eventData):
         response = parse_event_ffi(self.schema, contractName, eventData)
+        return json.loads(response)
+
+    def parameter_to_json(self, contractName, eventData):
+        response = parse_parameter_ffi(self.schema, contractName, eventData)
         return json.loads(response)
 
     def return_value_to_json(self, contractName, functionName, returnValueData):

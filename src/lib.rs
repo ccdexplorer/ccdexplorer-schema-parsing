@@ -12,6 +12,7 @@ fn schema_parsing(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(extract_schema_pair_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(parse_event_ffi, m)?)?;
     m.add_function(wrap_pyfunction!(parse_return_value_ffi, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_parameter_ffi, m)?)?;
     Ok(())
 }
 
@@ -103,6 +104,30 @@ fn parse_return_value_ffi(
     };
     match schema.get_receive_return_value_schema(contract_name, function_name) {
         Ok(s) => match s.to_json_string_pretty(&return_value_data) {
+            Ok(v) => Ok(v),
+            Err(e) => Err(PyValueError::new_err(format!("Unable to parse event: {e}"))),
+        },
+        Err(e) => Err(PyValueError::new_err(format!("No event schema: {e}"))),
+    }
+}
+
+#[pyfunction]
+fn parse_parameter_ffi(
+    versioned_module_schema: Vec<u8>,
+    contract_name: &str,
+    function_name: &str,
+    parameter_data: Vec<u8>,
+) -> PyResult<String> {
+    let schema: VersionedModuleSchema = match from_bytes(&versioned_module_schema) {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(PyValueError::new_err(format!(
+                "Unable to parse schema: {e}"
+            )))
+        }
+    };
+    match schema.get_receive_param_schema(contract_name, function_name) {
+        Ok(s) => match s.to_json_string_pretty(&parameter_data) {
             Ok(v) => Ok(v),
             Err(e) => Err(PyValueError::new_err(format!("Unable to parse event: {e}"))),
         },
