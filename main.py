@@ -16,7 +16,7 @@ from ccdexplorer_fundamentals.mongodb import (
 )
 from SchemaParser import SchemaParser
 
-# from env import *  # noqa: F403
+from ENV import RUN_ON_NET
 from rich.console import Console
 
 console = Console()
@@ -28,11 +28,16 @@ motormongo = MongoMotor(tooter)
 
 
 async def main():
-    schema_parser = SchemaParser(grpcclient, tooter, mongodb, motormongo, "testnet")
+    console.log(f"{RUN_ON_NET=}")
+    schema_parser = SchemaParser(grpcclient, tooter, mongodb, motormongo, RUN_ON_NET)
     async with AsyncScheduler() as scheduler:
         await scheduler.add_schedule(
+            schema_parser.source_module_refs_from_instances,
+            IntervalTrigger(seconds=60),
+        )
+        await scheduler.add_schedule(
             schema_parser.get_logged_events,
-            IntervalTrigger(seconds=10 * 60),
+            IntervalTrigger(seconds=0.1),
         )
         await scheduler.run_until_stopped()
         pass

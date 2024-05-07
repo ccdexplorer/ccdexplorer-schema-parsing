@@ -56,6 +56,7 @@ class GetLoggedEvents:
                     "module_name": instance["v1"]["name"][5:],
                 }
 
+        print("source_module_refs_from_instances...done")
         return self.contract_address_to_module_refs_cache
 
     def get_schema_from_source(self, module_ref: str, net: str):
@@ -129,119 +130,231 @@ class GetLoggedEvents:
         return cis_6_contracts[contract_address.to_str()]
 
     def get_logged_events(self):
-        print("get_logged_events...")
+        # print("get_logged_events...")
         cis_6_contracts: dict[bool] = {}
         self.db: dict[Collections, Collection]
-        contract_address_to_module_refs_cache = self.source_module_refs_from_instances()
+        contract_address_to_module_refs_cache = (
+            self.contract_address_to_module_refs_cache
+        )
+
         result = self.db[Collections.helpers].find_one(
             {"_id": "schema_parsing_last_processed_block"}
         )
         schema_parsing_last_processed_block = result["height"]
+        block_height_to_parse = schema_parsing_last_processed_block + 1
 
         pipeline = [
             {
-                "$match": {
-                    "account_transaction.effects.contract_update_issued": {
-                        "$exists": True
-                    }
-                },
+                "$match": {"block_info.height": block_height_to_parse},
             },
             {
                 "$match": {
-                    "block_info.height": {"$gt": schema_parsing_last_processed_block}
-                },
+                    "$or": [
+                        {
+                            "account_transaction.effects.contract_update_issued": {
+                                "$exists": True
+                            }
+                        },
+                        {
+                            "account_transaction.effects.contract_initialized": {
+                                "$exists": True
+                            }
+                        },
+                    ]
+                }
             },
-            {"$sort": {"block_height": ASCENDING}},
-            {"$limit": 1},
         ]
         result = list(self.db[Collections.transactions].aggregate(pipeline))
         tx_result = [CCD_BlockItemSummary(**x) for x in result]
-
+        if len(tx_result) > 0:
+            print(f"{block_height_to_parse=:,.0f} | Processing {len(tx_result)} txs.")
+        else:
+            print(".", end="")
         for tx in tx_result:
             logged_events = []
             effects = tx.account_transaction.effects
-            if not tx.account_transaction.effects.contract_update_issued:
+            if tx.account_transaction.effects.contract_update_issued:
+                pass
+            elif tx.account_transaction.effects.contract_initialized:
+                pass
+            else:
                 break
-            for effect_index, effect in enumerate(
-                effects.contract_update_issued.effects
-            ):
-                effect: CCD_ContractTraceElement
-                if not effect.updated:
-                    break
-                contract_address = effect.updated.address.to_str()
+            if tx.account_transaction.effects.contract_update_issued:
+                for effect_index, effect in enumerate(
+                    effects.contract_update_issued.effects
+                ):
+                    effect: CCD_ContractTraceElement
+                    if effect.updated:
+                        events = effect.updated.events
+                        address = effect.updated.address
+                    elif effect.interrupted:
+                        events = effect.interrupted.events
+                        address = effect.interrupted.address
+                    else:
+                        break
 
-                source_module_ref = contract_address_to_module_refs_cache.get(
-                    contract_address
-                )["source_module_ref"]
-                source_module_name = contract_address_to_module_refs_cache.get(
-                    contract_address
-                )["module_name"]
-                ci = CIS(
-                    self.grpcclient,
-                    effect.updated.address.index,
-                    effect.updated.address.subindex,
-                    f"{source_module_name}.supports",
-                    NET(self.net),
+                    (
+                        contract_address,
+                        source_module_ref,
+                        source_module_name,
+                        ci,
+                        supports_cis_6,
+                    ) = self.test_smart_contract_for_cis6(
+                        cis_6_contracts, contract_address_to_module_refs_cache, address
+                    )
+
+                    if not supports_cis_6:
+                        break
+                    for event_index, event in enumerate(events):
+                        possible_logged_event = self.process_event_for_tnt(
+                            event,
+                            source_module_ref,
+                            source_module_name,
+                            ci,
+                            tx,
+                            effect_index,
+                            address,
+                            event_index,
+                            contract_address,
+                        )
+                        if possible_logged_event:
+                            logged_events.append(possible_logged_event)
+
+            elif tx.account_transaction.effects.contract_initialized:
+                events = tx.account_transaction.effects.contract_initialized.events
+                address = tx.account_transaction.effects.contract_initialized.address
+                (
+                    contract_address,
+                    source_module_ref,
+                    source_module_name,
+                    ci,
+                    supports_cis_6,
+                ) = self.test_smart_contract_for_cis6(
+                    cis_6_contracts, contract_address_to_module_refs_cache, address
                 )
-                supports_cis_6 = self.check_cis_6(
-                    ci, cis_6_contracts, effect.updated.address
-                )
-                # print(effect.updated.address.to_str(), supports_cis_6)
 
                 if not supports_cis_6:
                     break
-                for event_index, event in enumerate(effect.updated.events):
+                for event_index, event in enumerate(events):
+                    possible_logged_event = self.process_event_for_tnt(
+                        event,
+                        source_module_ref,
+                        source_module_name,
+                        ci,
+                        tx,
+                        effect_index,
+                        address,
+                        event_index,
+                        contract_address,
+                    )
+                    if possible_logged_event:
+                        logged_events.append(possible_logged_event)
 
-                    schema = self.get_schema_from_source(source_module_ref, self.net)
-                    try:
-                        tag, result = ci.process_tnt_log_event(event)
-                        if tag == 236:
-                            event_json = schema.event_to_json(
-                                source_module_name,
-                                bytes.fromhex(event),
-                            )
-
-                            result: itemStatusChangedEvent
-                            result.new_status = list(
-                                event_json["ItemStatusChanged"][0]["new_status"].keys()
-                            )[0]
-                            possible_logged_event = self.formulate_tnt_logged_event(
-                                tx,
-                                tag,
-                                result,
-                                effect_index,
-                                effect.updated.address,
-                                event,
-                                event_index,
-                            )
-
-                            print(f"{tx.hash}: {contract_address} | {result}")
-                        if tag == 237:
-                            event_json = schema.event_to_json(
-                                source_module_name,
-                                bytes.fromhex(event),
-                            )
-
-                            result: itemCreatedEvent
-                            result.initial_status = list(
-                                event_json["ItemCreated"][0]["initial_status"].keys()
-                            )[0]
-                            possible_logged_event = self.formulate_tnt_logged_event(
-                                tx,
-                                tag,
-                                result,
-                                effect_index,
-                                effect.updated.address,
-                                event,
-                                event_index,
-                            )
-                            print(f"{tx.hash}: {contract_address} | {result}")
-                        if possible_logged_event:
-                            logged_events.append(possible_logged_event)
-                    except ValueError:
-                        pass
-                        # print(
-                        #     f"{tx.hash[:4]}: Unable to get schema from the module: No schema found in the module"
-                        # )
             if len(logged_events) > 0:
                 _ = self.db[Collections.tnt_logged_events].bulk_write(logged_events)
+
+        self.log_parsed_block(block_height_to_parse)
+
+    def log_parsed_block(self, height: int):
+        query = {"_id": "schema_parsing_last_processed_block"}
+        self.db[Collections.helpers].replace_one(
+            query,
+            {
+                "_id": "schema_parsing_last_processed_block",
+                "height": height,
+            },
+            upsert=True,
+        )
+
+    def test_smart_contract_for_cis6(
+        self,
+        cis_6_contracts: dict[bool],
+        contract_address_to_module_refs_cache: dict,
+        address: CCD_ContractAddress,
+    ):
+        contract_address = address.to_str()
+
+        source_module_ref = contract_address_to_module_refs_cache.get(contract_address)[
+            "source_module_ref"
+        ]
+        source_module_name = contract_address_to_module_refs_cache.get(
+            contract_address
+        )["module_name"]
+        ci = CIS(
+            self.grpcclient,
+            address.index,
+            address.subindex,
+            f"{source_module_name}.supports",
+            NET(self.net),
+        )
+        supports_cis_6 = self.check_cis_6(ci, cis_6_contracts, address)
+
+        return (
+            contract_address,
+            source_module_ref,
+            source_module_name,
+            ci,
+            supports_cis_6,
+        )
+
+    def process_event_for_tnt(
+        self,
+        event,
+        source_module_ref,
+        source_module_name,
+        ci: CIS,
+        tx: CCD_BlockItemSummary,
+        effect_index: int,
+        address: CCD_ContractAddress,
+        event_index: int,
+        contract_address: str,
+    ):
+        possible_logged_event = None
+        schema = self.get_schema_from_source(source_module_ref, self.net)
+        try:
+            tag, result = ci.process_tnt_log_event(event)
+            if tag == 236:
+                event_json = schema.event_to_json(
+                    source_module_name,
+                    bytes.fromhex(event),
+                )
+
+                result: itemStatusChangedEvent
+                result.new_status = list(
+                    event_json["ItemStatusChanged"][0]["new_status"].keys()
+                )[0]
+                possible_logged_event = self.formulate_tnt_logged_event(
+                    tx,
+                    tag,
+                    result,
+                    effect_index,
+                    address,
+                    event,
+                    event_index,
+                )
+
+                print(f"{tx.hash}: {contract_address} | {result}")
+            elif tag == 237:
+                event_json = schema.event_to_json(
+                    source_module_name,
+                    bytes.fromhex(event),
+                )
+
+                result: itemCreatedEvent
+                result.initial_status = list(
+                    event_json["ItemCreated"][0]["initial_status"].keys()
+                )[0]
+                possible_logged_event = self.formulate_tnt_logged_event(
+                    tx,
+                    tag,
+                    result,
+                    effect_index,
+                    address,
+                    event,
+                    event_index,
+                )
+                print(f"{tx.hash}: {contract_address} | {result}")
+        except ValueError:
+            pass
+
+        return possible_logged_event
