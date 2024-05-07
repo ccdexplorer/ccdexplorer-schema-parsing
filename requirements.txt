@@ -1,7 +1,11 @@
 maturin
 uv
 ccdexplorer-fundamentals
+ccdexplorer-schema-parser
 grpcio
 grpcio-tools
 grpclib
 python-dotenv
+apscheduler==4.0.0a4
+aiohttp
+asyncio
