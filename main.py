@@ -33,11 +33,11 @@ async def main():
     async with AsyncScheduler() as scheduler:
         await scheduler.add_schedule(
             schema_parser.source_module_refs_from_instances,
-            IntervalTrigger(seconds=60),
+            IntervalTrigger(seconds=2),
         )
         await scheduler.add_schedule(
             schema_parser.get_logged_events,
-            IntervalTrigger(seconds=0.1),
+            IntervalTrigger(seconds=1),
         )
         await scheduler.run_until_stopped()
         pass

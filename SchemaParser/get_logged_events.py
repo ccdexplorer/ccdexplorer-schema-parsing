@@ -42,7 +42,7 @@ instance = "<8527,0>"
 
 class GetLoggedEvents:
     def source_module_refs_from_instances(self):
-        print("source_module_refs_from_instances...")
+        # print("source_module_refs_from_instances...")
         result = self.db[Collections.instances].find({})
         for instance in list(result):
             if instance.get("v0"):
@@ -56,7 +56,7 @@ class GetLoggedEvents:
                     "module_name": instance["v1"]["name"][5:],
                 }
 
-        print("source_module_refs_from_instances...done")
+        # print("source_module_refs_from_instances...done")
         return self.contract_address_to_module_refs_cache
 
     def get_schema_from_source(self, module_ref: str, net: str):
