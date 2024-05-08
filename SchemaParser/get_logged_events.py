@@ -141,58 +141,114 @@ class GetLoggedEvents:
             {"_id": "schema_parsing_last_processed_block"}
         )
         schema_parsing_last_processed_block = result["height"]
-        block_height_to_parse = schema_parsing_last_processed_block + 1
+        block_height_to_parse_start = schema_parsing_last_processed_block + 1
 
-        pipeline = [
-            {
-                "$match": {"block_info.height": block_height_to_parse},
-            },
-            {
-                "$match": {
-                    "$or": [
-                        {
-                            "account_transaction.effects.contract_update_issued": {
-                                "$exists": True
-                            }
-                        },
-                        {
-                            "account_transaction.effects.contract_initialized": {
-                                "$exists": True
-                            }
-                        },
-                    ]
-                }
-            },
-        ]
-        result = list(self.db[Collections.transactions].aggregate(pipeline))
-        tx_result = [CCD_BlockItemSummary(**x) for x in result]
-        if len(tx_result) > 0:
-            print(f"{block_height_to_parse=:,.0f} | Processing {len(tx_result)} txs.")
+        result = self.db[Collections.helpers].find_one(
+            {"_id": "heartbeat_last_processed_block"}
+        )
+        heartbeat_last_processed_block = result["height"]
+        # subtract 1 to be on the safe side
+        if ((heartbeat_last_processed_block - 1) - block_height_to_parse_start) > 10000:
+            block_height_to_parse_end = block_height_to_parse_start + 1000
         else:
-            print(".", end="")
-        for tx in tx_result:
-            logged_events = []
-            effects = tx.account_transaction.effects
-            if tx.account_transaction.effects.contract_update_issued:
-                pass
-            elif tx.account_transaction.effects.contract_initialized:
-                pass
-            else:
-                break
-            if tx.account_transaction.effects.contract_update_issued:
-                for effect_index, effect in enumerate(
-                    effects.contract_update_issued.effects
-                ):
-                    effect: CCD_ContractTraceElement
-                    if effect.updated:
-                        events = effect.updated.events
-                        address = effect.updated.address
-                    elif effect.interrupted:
-                        events = effect.interrupted.events
-                        address = effect.interrupted.address
-                    else:
-                        break
+            block_height_to_parse_end = heartbeat_last_processed_block - 1
 
+        if block_height_to_parse_end >= block_height_to_parse_start:
+            pipeline = [
+                {
+                    "$match": {
+                        "block_info.height": {
+                            "$gte": block_height_to_parse_start,
+                            "$lte": block_height_to_parse_end,
+                        }
+                    }
+                },
+                {
+                    "$match": {
+                        "$or": [
+                            {
+                                "account_transaction.effects.contract_update_issued": {
+                                    "$exists": True
+                                }
+                            },
+                            {
+                                "account_transaction.effects.contract_initialized": {
+                                    "$exists": True
+                                }
+                            },
+                        ]
+                    }
+                },
+            ]
+            if block_height_to_parse_start != block_height_to_parse_end:
+                print(
+                    f"Processing blocks: {block_height_to_parse_start:,.0f}...{block_height_to_parse_end:,.0f}"
+                )
+            else:
+                print(f"Processing block:  {block_height_to_parse_start:,.0f}")
+            result = list(self.db[Collections.transactions].aggregate(pipeline))
+            tx_result = [CCD_BlockItemSummary(**x) for x in result]
+            if len(tx_result) > 0:
+                print(f"Relevant tx(s):  {len(tx_result)}")
+
+            logged_events = []
+            for tx in tx_result:
+
+                effects = tx.account_transaction.effects
+                if tx.account_transaction.effects.contract_update_issued:
+                    pass
+                elif tx.account_transaction.effects.contract_initialized:
+                    pass
+                else:
+                    break
+                if tx.account_transaction.effects.contract_update_issued:
+                    for effect_index, effect in enumerate(
+                        effects.contract_update_issued.effects
+                    ):
+                        effect: CCD_ContractTraceElement
+                        if effect.updated:
+                            events = effect.updated.events
+                            address = effect.updated.address
+                        elif effect.interrupted:
+                            events = effect.interrupted.events
+                            address = effect.interrupted.address
+                        else:
+                            break
+
+                        (
+                            contract_address,
+                            source_module_ref,
+                            source_module_name,
+                            ci,
+                            supports_cis_6,
+                        ) = self.test_smart_contract_for_cis6(
+                            cis_6_contracts,
+                            contract_address_to_module_refs_cache,
+                            address,
+                        )
+
+                        if not supports_cis_6:
+                            break
+                        for event_index, event in enumerate(events):
+                            possible_logged_event = self.process_event_for_tnt(
+                                event,
+                                source_module_ref,
+                                source_module_name,
+                                ci,
+                                tx,
+                                effect_index,
+                                address,
+                                event_index,
+                                contract_address,
+                            )
+                            if possible_logged_event:
+                                logged_events.append(possible_logged_event)
+
+                elif tx.account_transaction.effects.contract_initialized:
+                    events = tx.account_transaction.effects.contract_initialized.events
+                    address = (
+                        tx.account_transaction.effects.contract_initialized.address
+                    )
                     (
                         contract_address,
                         source_module_ref,
@@ -220,40 +276,11 @@ class GetLoggedEvents:
                         if possible_logged_event:
                             logged_events.append(possible_logged_event)
 
-            elif tx.account_transaction.effects.contract_initialized:
-                events = tx.account_transaction.effects.contract_initialized.events
-                address = tx.account_transaction.effects.contract_initialized.address
-                (
-                    contract_address,
-                    source_module_ref,
-                    source_module_name,
-                    ci,
-                    supports_cis_6,
-                ) = self.test_smart_contract_for_cis6(
-                    cis_6_contracts, contract_address_to_module_refs_cache, address
-                )
-
-                if not supports_cis_6:
-                    break
-                for event_index, event in enumerate(events):
-                    possible_logged_event = self.process_event_for_tnt(
-                        event,
-                        source_module_ref,
-                        source_module_name,
-                        ci,
-                        tx,
-                        effect_index,
-                        address,
-                        event_index,
-                        contract_address,
-                    )
-                    if possible_logged_event:
-                        logged_events.append(possible_logged_event)
-
             if len(logged_events) > 0:
+                print(f"Logged events: {len(logged_events)}")
                 _ = self.db[Collections.tnt_logged_events].bulk_write(logged_events)
 
-        self.log_parsed_block(block_height_to_parse)
+            self.log_parsed_block(block_height_to_parse_end)
 
     def log_parsed_block(self, height: int):
         query = {"_id": "schema_parsing_last_processed_block"}
@@ -333,7 +360,7 @@ class GetLoggedEvents:
                     event_index,
                 )
 
-                print(f"{tx.hash}: {contract_address} | {result}")
+                # print(f"{tx.hash}: {contract_address} | {result}")
             elif tag == 237:
                 event_json = schema.event_to_json(
                     source_module_name,
@@ -353,7 +380,7 @@ class GetLoggedEvents:
                     event,
                     event_index,
                 )
-                print(f"{tx.hash}: {contract_address} | {result}")
+                # print(f"{tx.hash}: {contract_address} | {result}")
         except ValueError:
             pass
 
