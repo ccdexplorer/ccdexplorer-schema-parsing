@@ -98,6 +98,7 @@ class GetLoggedEvents:
                 "event_type": LoggedEvents(tag_).name,
                 "block_height": tx.block_info.height,
                 "tx_hash": tx.hash,
+                "sender": tx.account_transaction.sender,
                 "tx_index": tx.index,
                 "effect_index": effect_index,
                 "event_index": event_index,
